@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <Flutter/Flutter.h>
-#import "nuisdk.framework/Headers/NeoNuiTts.h"
-#import "nuisdk.framework/Headers/NeoNuiCode.h"
+#import <nuisdk/NeoNuiTts.h>
+#import <nuisdk/NeoNuiCode.h>
 
 @interface NuiTtsHandler : NSObject <NeoNuiTtsDelegate>
 

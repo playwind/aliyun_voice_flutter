@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <Flutter/Flutter.h>
-#import "nuisdk.framework/Headers/NeoNui.h"
-#import "nuisdk.framework/Headers/NeoNuiCode.h"
+#import <nuisdk/NeoNui.h>
+#import <nuisdk/NeoNuiCode.h>
 
 @interface NuiAsrHandler : NSObject <NeoNuiSdkDelegate>
 
