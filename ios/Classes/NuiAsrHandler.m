@@ -7,9 +7,10 @@ static const int kBufferSize = 6400;
 
 #pragma mark - Audio Queue
 
-@interface NuiAudioQueue : NSObject
+@interface NuiAudioQueue : NSObject {
+    AudioQueueBufferRef _buffers[3];
+}
 @property (nonatomic, assign) AudioQueueRef queue;
-@property (nonatomic, assign) AudioQueueBufferRef buffers[3];
 @property (nonatomic, strong) NSMutableData *audioData;
 @property (nonatomic, assign) BOOL isRecording;
 @end
