@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  package="com.p1aywind.aliyun_voice">
+
+  <!-- 核心录音权限 危险权限，必须动态申请 -->
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-permission android:name="android.permission.MICROPHONE" />
+  
+  <!-- 声明需要麦克风硬件（推荐加上） -->
+  <uses-feature
+      android:name="android.hardware.microphone"
+      android:required="false" />
+
+</manifest>

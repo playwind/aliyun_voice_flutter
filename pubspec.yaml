@@ -1,0 +1,26 @@
+name: aliyun_voice
+description: Aliyun Voice SDK Flutter plugin - ASR (语音识别) + TTS (语音合成)
+version: 0.0.1
+publish_to: 'none'
+
+environment:
+  sdk: ">=3.8.0 <4.0.0"
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.p1aywind.aliyun_voice
+        pluginClass: NuiSdkPlugin
+      ios:
+        pluginClass: AliyunVoicePlugin
