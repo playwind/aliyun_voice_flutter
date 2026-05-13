@@ -1,4 +1,6 @@
 #import "NuiTtsHandler.h"
+#import <nuisdk/NeoNuiTts.h>
+#import <nuisdk/NeoNuiCode.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
@@ -24,6 +26,24 @@
 }
 
 - (BOOL)createWithSampleRate:(int)sampleRate {
+    NSError *error = nil;
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    if (![session setCategory:AVAudioSessionCategoryPlayback
+                     mode:AVAudioSessionModeDefault
+                  options:AVAudioSessionCategoryOptionDuckOthers
+                    error:&error]) {
+        NSLog(@"Failed to set AVAudioSession category: %@", error);
+        return NO;
+    }
+    if (![session setActive:YES error:&error]) {
+        NSLog(@"Failed to activate AVAudioSession: %@", error);
+        return NO;
+    }
+
+    if (![session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error]) {
+        NSLog(@"Failed to route audio to speaker: %@", error);
+    }
+
     AudioStreamBasicDescription format = {0};
     format.mSampleRate = sampleRate;
     format.mFormatID = kAudioFormatLinearPCM;
@@ -35,12 +55,17 @@
     format.mBitsPerChannel = 16;
 
     OSStatus status = AudioQueueNewOutput(&format, AudioOutputCallback, (__bridge void *)self, NULL, NULL, 0, &_queue);
-    if (status != noErr) return NO;
+    if (status != noErr) {
+        NSLog(@"AudioQueueNewOutput failed: %d", (int)status);
+        return NO;
+    }
 
-    for (int i = 0; i < 3; i++) {
+    // 分配 5 个缓冲区，每个 16KB（更大的缓冲区以容纳更多数据）
+    for (int i = 0; i < 5; i++) {
         AudioQueueBufferRef buffer;
-        AudioQueueAllocateBuffer(_queue, 8192, &buffer);
+        AudioQueueAllocateBuffer(_queue, 16384, &buffer);
         buffer->mAudioDataByteSize = 0;
+        buffer->mNumberPackets = 0;
         AudioQueueEnqueueBuffer(_queue, buffer, 0, NULL);
     }
     return YES;
@@ -57,6 +82,8 @@ static void AudioOutputCallback(void *inUserData,
             NSUInteger copyLen = MIN(data.length, inBuffer->mAudioDataBytesCapacity);
             memcpy(inBuffer->mAudioData, data.bytes, copyLen);
             inBuffer->mAudioDataByteSize = (UInt32)copyLen;
+            // 关键：必须设置 mNumberPackets
+            inBuffer->mNumberPackets = copyLen / 2; // 16-bit PCM, 1 channel
 
             if (copyLen < data.length) {
                 [player.audioQueue replaceObjectAtIndex:0 withObject:[data subdataWithRange:NSMakeRange(copyLen, data.length - copyLen)]];
@@ -65,9 +92,13 @@ static void AudioOutputCallback(void *inUserData,
             }
             AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
         } else if (player.finishSending) {
+            inBuffer->mAudioDataByteSize = 0;
+            inBuffer->mNumberPackets = 0;
+            AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
             player.isPlaying = NO;
         } else {
             inBuffer->mAudioDataByteSize = 0;
+            inBuffer->mNumberPackets = 0;
             AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
         }
     }
@@ -173,11 +204,12 @@ static void AudioOutputCallback(void *inUserData,
 
     NSFileManager *fm = [NSFileManager defaultManager];
     [fm createDirectoryAtPath:workPath withIntermediateDirectories:YES attributes:nil error:nil];
+    [self copySDKResources:workPath];
 
     NSString *params = [NSString stringWithFormat:
         @"{\"app_key\":\"%@\",\"token\":\"%@\",\"device_id\":\"%@\","
         "\"url\":\"wss://nls-gateway.cn-shanghai.aliyuncs.com:443/ws/v1\","
-        "\"workspace\":\"%@\",\"mode_type\":2}",
+        "\"workspace\":\"%@\",\"mode_type\":\"2\",\"service_protocol\":\"0\"}",
         appKey, token, deviceId, workPath];
 
     int ret = [_nuiTts nui_tts_initialize:[params UTF8String]
@@ -215,12 +247,14 @@ static void AudioOutputCallback(void *inUserData,
         result([FlutterError errorWithCode:@"TTS_PLAYER_ERROR" message:@"Failed to create audio player" details:nil]);
         return;
     }
+    // 提前启动 AudioQueue，以便能捕获 SDK 发来的所有数据
+    [_audioPlayer play];
 
     [_nuiTts nui_tts_set_param:"font_name" value:[voice UTF8String]];
     [_nuiTts nui_tts_set_param:"sample_rate" value:[[NSString stringWithFormat:@"%d", sampleRate] UTF8String]];
     [_nuiTts nui_tts_set_param:"speed_level" value:[[NSString stringWithFormat:@"%f", speed] UTF8String]];
     [_nuiTts nui_tts_set_param:"volume" value:[[NSString stringWithFormat:@"%f", volume] UTF8String]];
-
+    [_nuiTts nui_tts_set_param:"play_audio" value:"1"];
     int charNum = [_nuiTts nui_tts_get_num_of_chars:[text UTF8String]];
     [_nuiTts nui_tts_set_param:"tts_version" value:charNum > 300 ? "1" : "0"];
 
@@ -289,7 +323,7 @@ static void AudioOutputCallback(void *inUserData,
 - (void)onNuiTtsEventCallback:(NuiSdkTtsEvent)event taskId:(char *)taskid code:(int)code {
     switch (event) {
         case TTS_EVENT_START:
-            [_audioPlayer play];
+            // AudioQueue 已经在 handleStart 中启动
             [self sendEvent:@"ttsStart" data:@{@"taskId": taskid ? @(taskid) : @""}];
             break;
         case TTS_EVENT_END:
@@ -301,9 +335,11 @@ static void AudioOutputCallback(void *inUserData,
             [self sendEvent:@"ttsCancel" data:nil];
             break;
         case TTS_EVENT_PAUSE:
+            [_audioPlayer pausePlayback];
             [self sendEvent:@"ttsPause" data:nil];
             break;
         case TTS_EVENT_RESUME:
+            [_audioPlayer resumePlayback];
             [self sendEvent:@"ttsResume" data:nil];
             break;
         case TTS_EVENT_ERROR: {
@@ -337,6 +373,36 @@ static void AudioOutputCallback(void *inUserData,
     NSMutableDictionary *event = [NSMutableDictionary dictionaryWithObject:type forKey:@"type"];
     if (data) [event addEntriesFromDictionary:data];
     if (_eventSink) _eventSink(event);
+}
+
+- (void)copySDKResources:(NSString *)workPath {
+    NSBundle *sdkBundle = [NSBundle bundleForClass:[NeoNuiTts class]];
+    NSString *resourcePath = [sdkBundle pathForResource:@"Resources" ofType:@"bundle"];
+    if (!resourcePath) return;
+
+    NSBundle *resBundle = [NSBundle bundleWithPath:resourcePath];
+    if (!resBundle) return;
+
+    NSString *copylistPath = [resBundle pathForResource:@"copylist" ofType:@"txt"];
+    if (!copylistPath) return;
+
+    NSString *copylist = [NSString stringWithContentsOfFile:copylistPath encoding:NSUTF8StringEncoding error:nil];
+    NSArray *items = [copylist componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]];
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *item in items) {
+        NSString *trimmed = [item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+        if (trimmed.length == 0) continue;
+
+        NSString *srcPath = [resBundle.resourcePath stringByAppendingPathComponent:trimmed];
+        NSString *dstPath = [workPath stringByAppendingPathComponent:trimmed];
+
+        if ([fm fileExistsAtPath:dstPath]) continue;
+
+        NSString *dstDir = [dstPath stringByDeletingLastPathComponent];
+        [fm createDirectoryAtPath:dstDir withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm copyItemAtPath:srcPath toPath:dstPath error:nil];
+    }
 }
 
 @end

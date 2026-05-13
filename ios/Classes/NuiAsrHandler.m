@@ -1,4 +1,6 @@
 #import "NuiAsrHandler.h"
+#import <nuisdk/NeoNui.h>
+#import <nuisdk/NeoNuiCode.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
@@ -7,10 +9,9 @@ static const int kBufferSize = 6400;
 
 #pragma mark - Audio Queue
 
-@interface NuiAudioQueue : NSObject {
-    AudioQueueBufferRef _buffers[3];
-}
+@interface NuiAudioQueue : NSObject
 @property (nonatomic, assign) AudioQueueRef queue;
+@property (nonatomic, assign) AudioQueueBufferRef *buffers;
 @property (nonatomic, strong) NSMutableData *audioData;
 @property (nonatomic, assign) BOOL isRecording;
 @end
@@ -22,6 +23,10 @@ static const int kBufferSize = 6400;
     if (self) {
         _audioData = [NSMutableData data];
         _isRecording = NO;
+        _buffers = malloc(sizeof(AudioQueueBufferRef) * 3);
+        if (!_buffers) {
+            return nil;
+        }
     }
     return self;
 }
@@ -73,6 +78,13 @@ static void AudioInputCallback(void *inUserData,
     AudioQueueStop(_queue, YES);
     AudioQueueDispose(_queue, YES);
     _queue = NULL;
+}
+
+- (void)dealloc {
+    if (_buffers) {
+        free(_buffers);
+        _buffers = NULL;
+    }
 }
 
 - (void)releaseQueue {

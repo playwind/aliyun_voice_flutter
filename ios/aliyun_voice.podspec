@@ -18,6 +18,10 @@ Pod::Spec.new do |s|
     'AliyunVoice' => ['nuisdk.framework/Resources.bundle/**/*']
   }
 
+  s.pod_target_xcconfig = {
+    'OTHER_LDFLAGS' => '$(inherited) -framework "nuisdk"'
+  }
+
   s.platform         = :ios, '12.0'
   s.swift_version    = '5.0'
 
