@@ -4,13 +4,27 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <AVFoundation/AVFoundation.h>
 
-#pragma mark - Audio Player
+#pragma mark - Audio Player (AudioUnit-based, following Aliyun demo pattern)
 
-@interface NuiAudioPlayer : NSObject
-@property (nonatomic, assign) AudioQueueRef queue;
-@property (nonatomic, strong) NSMutableArray<NSData *> *audioQueue;
-@property (nonatomic, assign) BOOL isPlaying;
-@property (nonatomic, assign) BOOL finishSending;
+typedef enum {
+    PLAYER_STATE_IDLE = 0,
+    PLAYER_STATE_INIT,
+    PLAYER_STATE_PLAYING,
+    PLAYER_STATE_STOPPED,
+    PLAYER_STATE_DRAINING,
+} AudioPlayerState;
+
+@interface NuiAudioPlayer : NSObject {
+    AudioUnit _playUnit;
+    NSMutableData *_buffer;
+    int _writeOffset;
+    int _readOffset;
+    int _dataSize;
+    int _capacity;
+    AudioPlayerState _state;
+    AudioStreamBasicDescription _format;
+}
+@property (nonatomic, assign) BOOL draining;
 @end
 
 @implementation NuiAudioPlayer
@@ -18,9 +32,13 @@
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _audioQueue = [NSMutableArray array];
-        _isPlaying = NO;
-        _finishSending = NO;
+        _capacity = 1024 * 1024; // 1MB ring buffer
+        _buffer = [NSMutableData dataWithLength:_capacity];
+        _writeOffset = 0;
+        _readOffset = 0;
+        _dataSize = 0;
+        _state = PLAYER_STATE_IDLE;
+        _draining = NO;
     }
     return self;
 }
@@ -29,120 +47,223 @@
     NSError *error = nil;
     AVAudioSession *session = [AVAudioSession sharedInstance];
     if (![session setCategory:AVAudioSessionCategoryPlayback
-                     mode:AVAudioSessionModeDefault
-                  options:AVAudioSessionCategoryOptionDuckOthers
-                    error:&error]) {
-        NSLog(@"Failed to set AVAudioSession category: %@", error);
+                      mode:AVAudioSessionModeDefault
+                   options:AVAudioSessionCategoryOptionMixWithOthers
+                     error:&error]) {
+        NSLog(@"TTSPlayer: set AVAudioSession category failed: %@", error);
         return NO;
     }
     if (![session setActive:YES error:&error]) {
-        NSLog(@"Failed to activate AVAudioSession: %@", error);
+        NSLog(@"TTSPlayer: activate AVAudioSession failed: %@", error);
         return NO;
     }
 
-    if (![session overrideOutputAudioPort:AVAudioSessionPortOverrideSpeaker error:&error]) {
-        NSLog(@"Failed to route audio to speaker: %@", error);
-    }
+    memset(&_format, 0, sizeof(_format));
+    _format.mSampleRate = sampleRate;
+    _format.mFormatID = kAudioFormatLinearPCM;
+    _format.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+    _format.mBytesPerPacket = 2;
+    _format.mFramesPerPacket = 1;
+    _format.mBytesPerFrame = 2;
+    _format.mChannelsPerFrame = 1;
+    _format.mBitsPerChannel = 16;
 
-    AudioStreamBasicDescription format = {0};
-    format.mSampleRate = sampleRate;
-    format.mFormatID = kAudioFormatLinearPCM;
-    format.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
-    format.mBytesPerPacket = 2;
-    format.mFramesPerPacket = 1;
-    format.mBytesPerFrame = 2;
-    format.mChannelsPerFrame = 1;
-    format.mBitsPerChannel = 16;
+    AudioComponentDescription desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.componentType = kAudioUnitType_Output;
+    desc.componentSubType = kAudioUnitSubType_RemoteIO;
+    desc.componentManufacturer = kAudioUnitManufacturer_Apple;
 
-    OSStatus status = AudioQueueNewOutput(&format, AudioOutputCallback, (__bridge void *)self, NULL, NULL, 0, &_queue);
+    AudioComponent comp = AudioComponentFindNext(NULL, &desc);
+    OSStatus status = AudioComponentInstanceNew(comp, &_playUnit);
     if (status != noErr) {
-        NSLog(@"AudioQueueNewOutput failed: %d", (int)status);
+        NSLog(@"TTSPlayer: AudioComponentInstanceNew failed: %d", (int)status);
         return NO;
     }
 
-    // 分配 5 个缓冲区，每个 16KB（更大的缓冲区以容纳更多数据）
-    for (int i = 0; i < 5; i++) {
-        AudioQueueBufferRef buffer;
-        AudioQueueAllocateBuffer(_queue, 16384, &buffer);
-        buffer->mAudioDataByteSize = 0;
-        buffer->mNumberPackets = 0;
-        AudioQueueEnqueueBuffer(_queue, buffer, 0, NULL);
+    status = AudioUnitSetProperty(_playUnit,
+                                  kAudioUnitProperty_StreamFormat,
+                                  kAudioUnitScope_Input,
+                                  0,
+                                  &_format,
+                                  sizeof(_format));
+    if (status != noErr) {
+        NSLog(@"TTSPlayer: set StreamFormat failed: %d", (int)status);
+        return NO;
     }
+
+    UInt32 playFlag = 1;
+    AudioUnitSetProperty(_playUnit,
+                         kAudioOutputUnitProperty_EnableIO,
+                         kAudioUnitScope_Output,
+                         0,
+                         &playFlag,
+                         sizeof(playFlag));
+
+    AURenderCallbackStruct callback;
+    callback.inputProc = PlayCallback;
+    callback.inputProcRefCon = (__bridge void *)self;
+    status = AudioUnitSetProperty(_playUnit,
+                                  kAudioUnitProperty_SetRenderCallback,
+                                  kAudioUnitScope_Global,
+                                  0,
+                                  &callback,
+                                  sizeof(callback));
+    if (status != noErr) {
+        NSLog(@"TTSPlayer: set RenderCallback failed: %d", (int)status);
+        return NO;
+    }
+
+    status = AudioUnitInitialize(_playUnit);
+    if (status != noErr) {
+        NSLog(@"TTSPlayer: AudioUnitInitialize failed: %d", (int)status);
+        return NO;
+    }
+
+    _state = PLAYER_STATE_INIT;
+    NSLog(@"TTSPlayer: created with sampleRate=%d", sampleRate);
     return YES;
 }
 
-static void AudioOutputCallback(void *inUserData,
-                                AudioQueueRef inAQ,
-                                AudioQueueBufferRef inBuffer) {
-    NuiAudioPlayer *player = (__bridge NuiAudioPlayer *)inUserData;
+static OSStatus PlayCallback(void *inRefCon,
+                             AudioUnitRenderActionFlags *ioActionFlags,
+                             const AudioTimeStamp *inTimeStamp,
+                             UInt32 inBusNumber,
+                             UInt32 inNumberFrames,
+                             AudioBufferList *ioData) {
+    NuiAudioPlayer *player = (__bridge NuiAudioPlayer *)inRefCon;
+    UInt32 requestedBytes = ioData->mBuffers[0].mDataByteSize;
+    char *output = (char *)ioData->mBuffers[0].mData;
 
-    @synchronized (player.audioQueue) {
-        if (player.audioQueue.count > 0) {
-            NSData *data = player.audioQueue.firstObject;
-            NSUInteger copyLen = MIN(data.length, inBuffer->mAudioDataBytesCapacity);
-            memcpy(inBuffer->mAudioData, data.bytes, copyLen);
-            inBuffer->mAudioDataByteSize = (UInt32)copyLen;
-            // 关键：必须设置 mNumberPackets
-            inBuffer->mNumberPackets = copyLen / 2; // 16-bit PCM, 1 channel
-
-            if (copyLen < data.length) {
-                [player.audioQueue replaceObjectAtIndex:0 withObject:[data subdataWithRange:NSMakeRange(copyLen, data.length - copyLen)]];
-            } else {
-                [player.audioQueue removeObjectAtIndex:0];
+    @synchronized (player) {
+        int available = [player availableBytes];
+        if (available > 0) {
+            int toRead = (int)requestedBytes < available ? (int)requestedBytes : available;
+            [player readBytes:output length:toRead];
+            if (toRead < (int)requestedBytes) {
+                memset(output + toRead, 0, requestedBytes - toRead);
             }
-            AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
-        } else if (player.finishSending) {
-            inBuffer->mAudioDataByteSize = 0;
-            inBuffer->mNumberPackets = 0;
-            AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
-            player.isPlaying = NO;
         } else {
-            inBuffer->mAudioDataByteSize = 0;
-            inBuffer->mNumberPackets = 0;
-            AudioQueueEnqueueBuffer(inAQ, inBuffer, 0, NULL);
+            memset(output, 0, requestedBytes);
+            if (player.draining && player->_state == PLAYER_STATE_DRAINING) {
+                player->_state = PLAYER_STATE_STOPPED;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    AudioOutputUnitStop(player->_playUnit);
+                });
+            }
         }
     }
+    return noErr;
 }
 
-- (void)play {
-    if (_isPlaying) return;
-    _isPlaying = YES;
-    _finishSending = NO;
-    AudioQueueStart(_queue, NULL);
-}
-
-- (void)enqueueData:(NSData *)data {
-    @synchronized (_audioQueue) {
-        [_audioQueue addObject:data];
+- (void)start {
+    if (_state == PLAYER_STATE_PLAYING) return;
+    _state = PLAYER_STATE_PLAYING;
+    _draining = NO;
+    _writeOffset = 0;
+    _readOffset = 0;
+    _dataSize = 0;
+    OSStatus status = AudioOutputUnitStart(_playUnit);
+    if (status != noErr) {
+        NSLog(@"TTSPlayer: AudioOutputUnitStart failed: %d", (int)status);
+    } else {
+        NSLog(@"TTSPlayer: started");
     }
 }
 
-- (void)setFinish:(BOOL)finish {
-    _finishSending = finish;
+- (void)writeData:(const char *)data length:(int)len {
+    @synchronized (self) {
+        int remaining = _capacity - _dataSize;
+        if (len > remaining) {
+            NSLog(@"TTSPlayer: buffer overflow, dropping %d bytes", len - remaining);
+            len = remaining;
+        }
+        if (len <= 0) return;
+
+        // Wrap-around write to circular buffer
+        char *buf = (char *)_buffer.mutableBytes;
+        int firstWrite = _writeOffset + len <= _capacity ? len : _capacity - _writeOffset;
+        memcpy(buf + _writeOffset, data, firstWrite);
+        if (firstWrite < len) {
+            memcpy(buf, data + firstWrite, len - firstWrite);
+        }
+        _writeOffset = (_writeOffset + len) % _capacity;
+        _dataSize += len;
+    }
+}
+
+- (int)readBytes:(char *)out length:(int)len {
+    int toRead = _dataSize < len ? _dataSize : len;
+    if (toRead <= 0) return 0;
+
+    char *buf = (char *)_buffer.mutableBytes;
+    int firstRead = _readOffset + toRead <= _capacity ? toRead : _capacity - _readOffset;
+    memcpy(out, buf + _readOffset, firstRead);
+    if (firstRead < toRead) {
+        memcpy(out + firstRead, buf, toRead - firstRead);
+    }
+    _readOffset = (_readOffset + toRead) % _capacity;
+    _dataSize -= toRead;
+    return toRead;
+}
+
+- (int)availableBytes {
+    return _dataSize;
+}
+
+- (void)drain {
+    @synchronized (self) {
+        _draining = YES;
+        if (_dataSize == 0) {
+            _state = PLAYER_STATE_STOPPED;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                AudioOutputUnitStop(self->_playUnit);
+            });
+        } else {
+            _state = PLAYER_STATE_DRAINING;
+        }
+    }
+    NSLog(@"TTSPlayer: draining, remaining=%d bytes", _dataSize);
 }
 
 - (void)stop {
-    _isPlaying = NO;
-    _finishSending = YES;
-    @synchronized (_audioQueue) {
-        [_audioQueue removeAllObjects];
+    @synchronized (self) {
+        _state = PLAYER_STATE_STOPPED;
+        _draining = NO;
+        _dataSize = 0;
+        _writeOffset = 0;
+        _readOffset = 0;
     }
+    AudioOutputUnitStop(_playUnit);
+    NSLog(@"TTSPlayer: stopped");
 }
 
 - (void)pausePlayback {
-    if (_queue) AudioQueuePause(_queue);
+    if (_state == PLAYER_STATE_PLAYING || _state == PLAYER_STATE_DRAINING) {
+        AudioOutputUnitStop(_playUnit);
+    }
 }
 
 - (void)resumePlayback {
-    if (_queue) AudioQueueStart(_queue, NULL);
+    if (_state == PLAYER_STATE_PLAYING || _state == PLAYER_STATE_DRAINING) {
+        AudioOutputUnitStart(_playUnit);
+    }
 }
 
 - (void)releasePlayer {
     [self stop];
-    if (_queue) {
-        AudioQueueDispose(_queue, YES);
-        _queue = NULL;
+    if (_playUnit) {
+        AudioOutputUnitStop(_playUnit);
+        AudioUnitUninitialize(_playUnit);
+        AudioComponentInstanceDispose(_playUnit);
+        _playUnit = NULL;
     }
+    _state = PLAYER_STATE_IDLE;
+    NSLog(@"TTSPlayer: released");
+}
+
+- (void)dealloc {
+    [self releasePlayer];
 }
 
 @end
@@ -242,19 +363,20 @@ static void AudioOutputCallback(void *inUserData,
         return;
     }
 
+    [_audioPlayer releasePlayer];
     _audioPlayer = [[NuiAudioPlayer alloc] init];
     if (![_audioPlayer createWithSampleRate:sampleRate]) {
         result([FlutterError errorWithCode:@"TTS_PLAYER_ERROR" message:@"Failed to create audio player" details:nil]);
         return;
     }
-    // 提前启动 AudioQueue，以便能捕获 SDK 发来的所有数据
-    [_audioPlayer play];
 
     [_nuiTts nui_tts_set_param:"font_name" value:[voice UTF8String]];
     [_nuiTts nui_tts_set_param:"sample_rate" value:[[NSString stringWithFormat:@"%d", sampleRate] UTF8String]];
     [_nuiTts nui_tts_set_param:"speed_level" value:[[NSString stringWithFormat:@"%f", speed] UTF8String]];
     [_nuiTts nui_tts_set_param:"volume" value:[[NSString stringWithFormat:@"%f", volume] UTF8String]];
-    [_nuiTts nui_tts_set_param:"play_audio" value:"1"];
+    // KEY FIX: play_audio=0 means SDK returns PCM data via callback, we handle playback ourselves
+    [_nuiTts nui_tts_set_param:"play_audio" value:"0"];
+
     int charNum = [_nuiTts nui_tts_get_num_of_chars:[text UTF8String]];
     [_nuiTts nui_tts_set_param:"tts_version" value:charNum > 300 ? "1" : "0"];
 
@@ -270,7 +392,7 @@ static void AudioOutputCallback(void *inUserData,
         result([FlutterError errorWithCode:@"NOT_INITIALIZED" message:@"TTS not initialized" details:nil]);
         return;
     }
-    [_audioPlayer releasePlayer];
+    [_audioPlayer stop];
     int ret = [_nuiTts nui_tts_cancel:""];
     if (ret == 0) result(@(YES));
     else result([FlutterError errorWithCode:@"TTS_CANCEL_FAILED"
@@ -323,15 +445,17 @@ static void AudioOutputCallback(void *inUserData,
 - (void)onNuiTtsEventCallback:(NuiSdkTtsEvent)event taskId:(char *)taskid code:(int)code {
     switch (event) {
         case TTS_EVENT_START:
-            // AudioQueue 已经在 handleStart 中启动
+            // Start player when TTS stream begins (matching demo pattern)
+            [_audioPlayer start];
             [self sendEvent:@"ttsStart" data:@{@"taskId": taskid ? @(taskid) : @""}];
             break;
         case TTS_EVENT_END:
-            [_audioPlayer setFinish:YES];
+            // Drain: let remaining buffered audio finish playing
+            [_audioPlayer drain];
             [self sendEvent:@"ttsEnd" data:@{@"taskId": taskid ? @(taskid) : @""}];
             break;
         case TTS_EVENT_CANCEL:
-            [_audioPlayer releasePlayer];
+            [_audioPlayer stop];
             [self sendEvent:@"ttsCancel" data:nil];
             break;
         case TTS_EVENT_PAUSE:
@@ -344,7 +468,7 @@ static void AudioOutputCallback(void *inUserData,
             break;
         case TTS_EVENT_ERROR: {
             const char *errMsg = [_nuiTts nui_tts_get_param:"error_msg"];
-            [_audioPlayer releasePlayer];
+            [_audioPlayer stop];
             [self sendEvent:@"ttsError" data:@{
                 @"code": @(code),
                 @"message": errMsg ? @(errMsg) : @"TTS error",
@@ -359,7 +483,7 @@ static void AudioOutputCallback(void *inUserData,
 
 - (void)onNuiTtsUserdataCallback:(char *)info infoLen:(int)info_len buffer:(char *)buffer len:(int)len taskId:(char *)task_id {
     if (buffer && len > 0) {
-        [_audioPlayer enqueueData:[NSData dataWithBytes:buffer length:len]];
+        [_audioPlayer writeData:buffer length:len];
     }
 }
 
