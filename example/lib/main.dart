@@ -5,9 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-// 替换为你的 AppKey 和 Token
-const _appKey = '9KeF4Rz34l0Fej79';
-const _token = '9fba9d45850d4478b49299f48deb5fc6';
+// TODO: Replace with your Aliyun appKey and token
+// Obtain from https://nls-portal.console.aliyun.com/
+const _appKey = '';
+const _token = '';
 
 void main() => runApp(const _App());
 

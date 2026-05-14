@@ -1,10 +1,16 @@
-// Aliyun Voice SDK Flutter Plugin
-//
-// 提供阿里云智能语音 NUI SDK 的 Flutter 封装，支持：
-// - 语音识别（ASR）：AliyunAsrService
-// - 语音合成（TTS）：AliyunTtsService
-//
-// 使用前需初始化对应服务，传入 appKey 和 token。
+/// Flutter plugin for Aliyun NUI SDK — speech recognition and text-to-speech.
+///
+/// Supports Android, iOS, and HarmonyOS (OHOS).
+///
+/// ```dart
+/// import 'package:aliyun_voice/aliyun_voice.dart';
+///
+/// final asr = AliyunAsrService();
+/// await asr.initialize(appKey: '...', token: '...');
+/// asr.eventStream.listen((event) => print(event));
+/// await asr.startDialog(enableVad: true);
+/// ```
+library;
 
 export 'src/aliyun_asr_service.dart';
 export 'src/aliyun_tts_service.dart';

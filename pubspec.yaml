@@ -1,7 +1,15 @@
 name: aliyun_voice
-description: Aliyun Voice SDK Flutter plugin - ASR (语音识别) + TTS (语音合成)
+description: Flutter plugin for Aliyun NUI SDK — speech recognition (ASR) and text-to-speech (TTS) on Android, iOS, and HarmonyOS.
 version: 0.0.1
-publish_to: 'none'
+repository: https://github.com/p1aywind/aliyun_voice
+issue_tracker: https://github.com/p1aywind/aliyun_voice/issues
+license: BSD-3-Clause
+topics:
+  - speech
+  - tts
+  - asr
+  - voice
+  - aliyun
 
 environment:
   sdk: ">=3.8.0 <4.0.0"
