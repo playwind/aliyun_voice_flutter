@@ -1,0 +1,8 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "Aliyun Voice Example" },
+    { "name": "EntryAbility_desc", "value": "Aliyun Voice Example Entry" },
+    { "name": "EntryAbility_label", "value": "Aliyun Voice" },
+    { "name": "mic_reason", "value": "Microphone access is required for speech recognition" }
+  ]
+}

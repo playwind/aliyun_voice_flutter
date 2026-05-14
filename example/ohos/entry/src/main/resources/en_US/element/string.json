@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "Aliyun Voice Example" },
+    { "name": "EntryAbility_desc", "value": "Aliyun Voice Example Entry" },
+    { "name": "EntryAbility_label", "value": "Aliyun Voice" }
+  ]
+}

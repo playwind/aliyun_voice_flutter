@@ -1,0 +1,12 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Example entry module",
+  "main": "",
+  "author": "",
+  "license": "",
+  "dependencies": {
+    "aliyun_voice": "file:../../../ohos",
+    "permission_handler_ohos": "file:../../../../pubcache/git/flutter_permission_handler-fcc5b74e621b018c5b1d958c61d54cecef354b17/permission_handler_ohos/ohos"
+  }
+}

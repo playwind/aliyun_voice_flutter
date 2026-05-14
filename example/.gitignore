@@ -20,6 +20,11 @@ migrate_working_dir/
 .hvigor/
 node_modules/
 oh_modules/
+local.properties
+oh-package-lock.json5
+package-lock.json
+package.json
+**/rawfile/flutter_assets/
 
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line

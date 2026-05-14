@@ -1,0 +1,12 @@
+{
+  "modelVersion": "5.1.0",
+  "name": "aliyun_voice_example",
+  "version": "1.0.0",
+  "description": "Example app for Aliyun Voice Flutter plugin",
+  "main": "",
+  "author": "",
+  "license": "",
+  "devDependencies": {
+    "@ohos/hypium": "1.0.6"
+  }
+}
