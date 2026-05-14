@@ -24,3 +24,5 @@ flutter:
         pluginClass: NuiSdkPlugin
       ios:
         pluginClass: AliyunVoicePlugin
+      ohos:
+        pluginClass: AliyunVoicePlugin

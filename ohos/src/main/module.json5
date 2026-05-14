@@ -1,0 +1,7 @@
+{
+  "module": {
+    "name": "aliyun_voice",
+    "type": "har",
+    "deviceTypes": ["phone"]
+  }
+}

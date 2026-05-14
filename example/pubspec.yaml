@@ -1,23 +1,35 @@
-name: aliyun_voice_example
-description: Aliyun Voice SDK example app
-publish_to: 'none'
-version: 1.0.0+1
-
-environment:
-  sdk: ^3.9.2
-
-dependencies:
-  flutter:
-    sdk: flutter
-  aliyun_voice:
-    path: ../
-  cupertino_icons: ^1.0.8
-  permission_handler: ^11.0.1
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-  flutter_lints: ^5.0.0
-
-flutter:
+name: aliyun_voice_example 
+description: Aliyun Voice SDK example app 
+publish_to: 'none' 
+version: 1.0.0+1 
+ 
+environment: 
+  sdk: ^3.9.2 
+ 
+dependencies: 
+  flutter: 
+    sdk: flutter 
+  aliyun_voice: 
+    path: ../ 
+  cupertino_icons: ^1.0.8 
+  permission_handler: ^11.0.1 
+  permission_handler_ohos: 
+    git: 
+      url: https://gitcode.com/openharmony-sig/flutter_permission_handler.git 
+      path: permission_handler_ohos 
+      ref: br_v12.0.1_ohos 
+ 
+dev_dependencies: 
+  flutter_test: 
+    sdk: flutter 
+  flutter_lints: ^5.0.0 
+ 
+dependency_overrides: 
+  permission_handler: 
+    git: 
+      url: https://gitcode.com/openharmony-sig/flutter_permission_handler.git 
+      path: permission_handler 
+      ref: br_v12.0.1_ohos 
+ 
+flutter: 
   uses-material-design: true

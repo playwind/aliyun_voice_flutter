@@ -1,13 +1,13 @@
 {
-  "modelVersion": "5.1.0",
   "name": "aliyun_voice",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
-  "main": "",
+  "description": "Aliyun Voice SDK Flutter plugin - ASR + TTS",
+  "main": "Index.ets",
   "author": "",
   "license": "",
-  "dependencies": {},
-  "devDependencies": {
-    "@ohos/hypium": "1.0.6"
-  }
+  "dependencies": {
+    "@ohos/flutter_ohos": "file:./har/flutter_ohos.har",
+    "neonui": "file:./har/neonui.har"
+  },
+  "modelVersion": "1"
 }

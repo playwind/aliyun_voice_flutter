@@ -7,7 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 // 替换为你的 AppKey 和 Token
 const _appKey = '9KeF4Rz34l0Fej79';
-const _token = 'a260e68ca928405a8582bd1c8d8f6bb2';
+const _token = '9fba9d45850d4478b49299f48deb5fc6';
 
 void main() => runApp(const _App());
 
